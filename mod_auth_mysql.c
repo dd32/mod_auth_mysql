@@ -68,6 +68,8 @@
  * MODULE-DEFINITION-END
  */
 
+#define PHPASS_ADDSLASHES 1
+
 #define STRING(x) STR(x)		/* Used to build strings from compile options */
 #define STR(x) #x
 
@@ -865,11 +867,44 @@ static short pw_plain(POOL * pool, const char * real_pw, const char * sent_pw, c
   return strcmp(real_pw, sent_pw) == 0;
 }
 
+static void phpass_addslashes(const char * src, char * dest) {
+#ifdef PHPASS_ADDSLASHES
+	int length;
+	const char *source, *end;
+	char *target;
+
+	source = src;
+	target = dest;
+	length = strlen(src);
+	end = src + length;
+
+	while (source < end) {
+		switch (*source) {
+			case '\'':
+				case '\"':
+			case '\\':
+					*target++ = '\\';
+			default:
+					*target++ = *source;
+					break;
+		}
+		source++;
+	}
+
+	*target = '\0';
+#endif
+}
+
 /* checks phpass portable passwords */
 static short pw_phpass_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt) {
-	if (strcmp(real_pw, crypt_private(sent_pw, real_pw))) {
-		return pw_md5(pool, real_pw, sent_pw, salt); 
+	char *escaped_sent_pw[64];
+
+	phpass_addslashes(sent_pw, escaped_sent_pw);
+
+	if (strcmp(real_pw, crypt_private((const char *) escaped_sent_pw, real_pw))) {
+		return pw_md5(pool, real_pw, (const char *) escaped_sent_pw, salt); 
 	}
+
 	return 1;
 }
 

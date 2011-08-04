@@ -897,7 +897,7 @@ static void phpass_addslashes(const char * src, char * dest) {
 
 /* checks phpass portable passwords */
 static short pw_phpass_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt) {
-	char escaped_sent_pw[64];
+	char *escaped_sent_pw = alloca(2 * strlen(sent_pw) + 1);
 
 	phpass_addslashes(sent_pw, escaped_sent_pw);
 

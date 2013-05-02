@@ -203,11 +203,6 @@
 #include "http_log.h"
 #include "http_protocol.h"
 
-#if APR_HAS_THREADS
- #include <apr_thread_mutex.h>
-#endif
-
-
 #ifdef APACHE2
   #define PCALLOC apr_pcalloc
   #define SNPRINTF apr_snprintf
@@ -388,16 +383,13 @@ typedef struct  {
  */
 typedef struct {
   MYSQL * handle;
-#if APR_HAS_THREADS 
-  apr_thread_mutex_t *lock;       /* per connection lock */
-#endif
   char host [255];
   char user [255];
   char db [255];
   time_t last_used;
 } mysql_connection;
 
-static mysql_connection connection = {NULL, NULL,"", "", ""};
+static mysql_connection connection = {NULL, "", "", ""};
 
 /*
  * Global handle to db.  If not null, assume it is still valid.
@@ -408,9 +400,7 @@ static mysql_connection connection = {NULL, NULL,"", "", ""};
 
 static void close_connection() {
   if (connection.handle)
-  {
     mysql_close(connection.handle);
-  }
   connection.handle = NULL;		/* make sure we don't try to use it later */
   return;
 }
@@ -449,6 +439,8 @@ child_exit(server_rec *s, pool *p)
 }
 #endif
 
+
+
 #ifndef TRUE
 #define TRUE 1
 #endif
@@ -468,18 +460,9 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
   char query[MAX_STRING_LEN];
   short host_match = FALSE;
   short user_match = FALSE;
-  short ret = FALSE;
-
-#if APR_HAS_THREADS
-  if (!connection.lock)
-  {
-    LOG_ERROR_2(APLOG_ERR, 0, r, "open_db_handle: connection.lock(%x) is not initialized req(%x)", connection.lock, r->uri);
-    return FALSE;
-  }
-  apr_thread_mutex_lock(connection.lock);
-#endif
 
   if (connection.handle) {
+
     /* See if the host has changed */
     if (!m->mysqlhost || (strcmp(m->mysqlhost, "localhost") == 0)) {
       if (connection.host[0] == '\0')
@@ -502,35 +485,27 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
     if (host_match && user_match) {
       /* If the database hasn't changed, we can just return */
       if (m->mysqlDB && strcmp(m->mysqlDB, connection.db) == 0)
-      {
-	ret = TRUE; /* already opened */
-	goto exit_open_db_handle; 
-      }
+	return TRUE; /* already open */
+
       /* Otherwise we need to reselect the database */
       else {
 	if (mysql_select_db(connection.handle,m->mysqlDB) != 0) {
 	  LOG_ERROR_1(APLOG_ERR, 0, r, "MySQL ERROR: %s", mysql_error(connection.handle));
-	  ret = FALSE;
-	  goto exit_open_db_handle;
+	  return FALSE;
 	}
 	else {
 	  strcpy (connection.db, m->mysqlDB);
-	  ret = TRUE;
-          goto exit_open_db_handle;
+	  return TRUE;
 	}
       }
     }
     else
-    {
       close_connection();
-    }
   }
 
   connection.handle = mysql_init(&mysql_conn);
   if (! connection.handle) {
-    LOG_ERROR_1(APLOG_ERR, 0, r, "MySQL mysql_init failed ERROR: %s", mysql_error(&mysql_conn));
-    ret = FALSE;
-    goto exit_open_db_handle;
+    LOG_ERROR_1(APLOG_ERR, 0, r, "MySQL ERROR: %s", mysql_error(&mysql_conn));
   }
 
   if (!m->mysqlhost || strcmp(m->mysqlhost,"localhost") == 0) {
@@ -550,8 +525,7 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
 #endif
   if (!connection.handle) {
     LOG_ERROR_1(APLOG_ERR, 0, r, "MySQL ERROR: %s", mysql_error(&mysql_conn));
-    ret = FALSE;
-    goto exit_open_db_handle;
+    return FALSE;
   }
 
   if (!m->mysqlKeepAlive) {
@@ -570,8 +544,7 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
 
   if (mysql_select_db(connection.handle,m->mysqlDB) != 0) {
     LOG_ERROR_1(APLOG_ERR, 0, r, "MySQL ERROR: %s", mysql_error(connection.handle));
-    ret = FALSE;
-    goto exit_open_db_handle;
+    return FALSE;
   }
   else {
     strcpy (connection.db, m->mysqlDB);
@@ -580,17 +553,11 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
     SNPRINTF(query, sizeof(query)-1, "SET CHARACTER SET %s", m->mysqlCharacterSet);
     if (mysql_query(connection.handle, query) != 0) {
       LOG_ERROR_2(APLOG_ERR, 0, r, "MySQL ERROR: %s: %s", mysql_error(connection.handle), r->uri);
-      ret = FALSE;
-      goto exit_open_db_handle;
+      return FALSE;
     }
   }
 
-exit_open_db_handle:
-#if APR_HAS_THREADS
-  apr_thread_mutex_unlock(connection.lock);
-#endif
-
-  return ret;
+  return TRUE;
 }
 
 static void * create_mysql_auth_dir_config (POOL *p, char *d)
@@ -1141,23 +1108,12 @@ static char * get_mysql_pw(request_rec *r, char *user, mysql_auth_config_rec *m,
 		m->mysqlNameField, sql_safe_user);
     }
   }
-
-#if APR_HAS_THREADS
-  apr_thread_mutex_lock(connection.lock);
-#endif
   if (mysql_query(connection.handle, query) != 0) {
-#if APR_HAS_THREADS
-    apr_thread_mutex_unlock(connection.lock);
-#endif
     LOG_ERROR_2(APLOG_ERR, 0, r, "MySQL ERROR: %s: %s", mysql_error(connection.handle), r->uri);
     return NULL;
   }
 
   result = mysql_store_result(connection.handle);
-#if APR_HAS_THREADS
-  apr_thread_mutex_unlock(connection.lock);
-#endif
-
   /* if (result && (mysql_num_rows(result) == 1)) */
   if (result && (mysql_num_rows(result) >= 1)) {
     MYSQL_ROW data = mysql_fetch_row(result);
@@ -1219,23 +1175,12 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
 	      m->mysqlGroupField, m->mysqlgrptable,
 	      m->mysqlGroupUserNameField, sql_safe_user);
   }
-
-#if APR_HAS_THREADS
-  apr_thread_mutex_lock(connection.lock);
-#endif
   if (mysql_query(connection.handle, query) != 0) {
-#if APR_HAS_THREADS
-    apr_thread_mutex_unlock(connection.lock);
-#endif
     LOG_ERROR_2(APLOG_ERR, 0, r, "MySQL error %s: %s", mysql_error(connection.handle),r->uri);
     return NULL;
   }
 
   result = mysql_store_result(connection.handle);
-#if APR_HAS_THREADS
-    apr_thread_mutex_unlock(connection.lock);
-#endif
-
   if (result && (mysql_num_rows(result) > 0)) {
     int i = mysql_num_rows(result);
     list = (char **) PCALLOC(r->pool, sizeof(char *) * (i+1));
@@ -1252,19 +1197,6 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
   if (result) mysql_free_result(result);
 
   return list;
-}
-
-/*
-* Initialize connection mutex. 
-*/
-static void mysql_auth_child_init (apr_pool_t *pool, server_rec *server)
-{
-#if APR_HAS_THREADS
-  if ( ! connection.lock)
-  {
-     apr_thread_mutex_create(&connection.lock, APR_THREAD_MUTEX_UNNESTED, pool);
-  }
-#endif
 }
 
 /*
@@ -1452,7 +1384,6 @@ static int mysql_check_auth(request_rec *r)
 #ifdef APACHE2
 static void register_hooks(POOL *p)
 {
-	ap_hook_child_init(mysql_auth_child_init, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_check_user_id(mysql_authenticate_basic_user, NULL, NULL, APR_HOOK_MIDDLE);
 	ap_hook_auth_checker(mysql_check_auth, NULL, NULL, APR_HOOK_MIDDLE);
 }

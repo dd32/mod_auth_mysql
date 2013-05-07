@@ -411,11 +411,18 @@ static mysql_connection connection = {NULL, "", "", ""};
 /* static MYSQL *mysql_handle = NULL; */
 
 static void close_connection() {
+
+#if APR_HAS_THREADS
+  apr_thread_mutex_lock(connection.lock);
+#endif
   if (connection.handle)
   {
     mysql_close(connection.handle);
   }
   connection.handle = NULL;		/* make sure we don't try to use it later */
+#if APR_HAS_THREADS
+  apr_thread_mutex_unlock(connection.lock);
+#endif
   return;
 }
 
@@ -526,7 +533,13 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
     }
     else
     {
-      close_connection();
+       #if APR_HAS_THREADS
+       apr_thread_mutex_unlock(connection.lock);
+       #endif
+       close_connection();
+       #if APR_HAS_THREADS
+       apr_thread_mutex_lock(connection.lock);
+       #endif
     }
   }
 
@@ -1264,9 +1277,9 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
 static void mysql_auth_child_init (apr_pool_t *pool, server_rec *server)
 {
 #if APR_HAS_THREADS
-  if ( ! connection.lock)
+  if ( !connection.lock)
   {
-     apr_thread_mutex_create(&connection.lock, APR_THREAD_MUTEX_UNNESTED, pool);
+     apr_thread_mutex_create(&connection.lock, APR_THREAD_MUTEX_DEFAULT, pool);
   }
 #endif
 }

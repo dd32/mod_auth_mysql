@@ -1002,7 +1002,7 @@ static char * format_remote_host(request_rec * r, char ** parm) {
 }
 
 static char * format_remote_ip(request_rec * r, char ** parm) {
-  return r->connection->remote_ip;
+  return r->connection->client_ip;
 }
 
 static char * format_filename(request_rec * r, char ** parm) {
@@ -1402,9 +1402,9 @@ static int mysql_check_auth(request_rec *r)
   int method = r->method_number;
 
 #ifdef APACHE2
-  const apr_array_header_t *reqs_arr = ap_requires(r);
+  const apr_array_header_t *reqs_arr = NULL;
 #else
-  const array_header *reqs_arr = ap_requires(r);
+  const array_header *reqs_arr = NULL;
 #endif
 
   require_line *reqs = reqs_arr ? (require_line *)reqs_arr->elts : NULL;

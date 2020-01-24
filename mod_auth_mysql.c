@@ -279,6 +279,7 @@
 #endif
 
 #include "crypt_private.h"
+#include "crypt_scrambled.h"
 
 #ifndef SCRAMBLED_PASSWORD_CHAR_LENGTH /* Ensure it is defined for older MySQL releases */
   #define SCRAMBLED_PASSWORD_CHAR_LENGTH 32 /* Big enough for the old method of scrambling */
@@ -484,7 +485,7 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
 #if APR_HAS_THREADS
   if (!connection.lock)
   {
-    LOG_ERROR_2(APLOG_ERR, 0, r, "open_db_handle: connection.lock(%x) is not initialized req(%x)", connection.lock, r->uri);
+    LOG_ERROR_2(APLOG_ERR, 0, r, "open_db_handle: connection.lock(%p) is not initialized req(%p)", connection.lock, r->uri);
     return FALSE;
   }
   apr_thread_mutex_lock(connection.lock);
@@ -867,7 +868,7 @@ static short pw_scrambled(POOL * pool, const char * real_pw, const char * sent_p
     make_scrambled_password_323(encrypted_sent_pw, sent_pw);
   else
 #endif
-    make_scrambled_password(encrypted_sent_pw, sent_pw);
+    crypt_scrambled_password(encrypted_sent_pw, sent_pw);
   return strcmp(real_pw, encrypted_sent_pw) == 0;
 }
 
@@ -985,7 +986,7 @@ static char * str_format(request_rec * r, char * input) {
       }
     }
     if (!found) {
-      LOG_ERROR_2(APLOG_ERR|APLOG_NOERRNO, 0, r, "MySQL ERROR: Invalid formatting character at position %d: \"%s\"",
+      LOG_ERROR_2(APLOG_ERR|APLOG_NOERRNO, 0, r, "MySQL ERROR: Invalid formatting character at position %ld: \"%s\"",
 		      pos-output, output);
       return input;
     }

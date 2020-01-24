@@ -520,7 +520,7 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
       if (m->mysqlDB && strcmp(m->mysqlDB, connection.db) == 0)
       {
 	ret = TRUE; /* already opened */
-	goto exit_open_db_handle; 
+	goto just_exit; 
       }
       /* Otherwise we need to reselect the database */
       else {
@@ -532,7 +532,7 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
 	else {
 	  strcpy (connection.db, m->mysqlDB);
 	  ret = TRUE;
-          goto exit_open_db_handle;
+	goto just_exit; 
 	}
       }
     }
@@ -607,10 +607,15 @@ open_db_handle(request_rec *r, mysql_auth_config_rec *m)
     }
   }
 
+  goto just_exit;
+
 exit_open_db_handle:
 #if APR_HAS_THREADS
   apr_thread_mutex_unlock(connection.lock);
 #endif
+
+   // just exit without releasing mutex
+just_exit:
 
   return ret;
 }
@@ -1172,9 +1177,6 @@ static char * get_mysql_pw(request_rec *r, char *user, mysql_auth_config_rec *m,
     }
   }
 
-#if APR_HAS_THREADS
-  apr_thread_mutex_lock(connection.lock);
-#endif
   if (mysql_query(connection.handle, query) != 0) {
 #if APR_HAS_THREADS
     apr_thread_mutex_unlock(connection.lock);
@@ -1184,9 +1186,6 @@ static char * get_mysql_pw(request_rec *r, char *user, mysql_auth_config_rec *m,
   }
 
   result = mysql_store_result(connection.handle);
-#if APR_HAS_THREADS
-  apr_thread_mutex_unlock(connection.lock);
-#endif
 
   /* if (result && (mysql_num_rows(result) == 1)) */
   if (result && (mysql_num_rows(result) >= 1)) {
@@ -1200,6 +1199,9 @@ static char * get_mysql_pw(request_rec *r, char *user, mysql_auth_config_rec *m,
       /* this should never happen, but test for it anyhow */
       LOG_ERROR_2(APLOG_NOERRNO|APLOG_ERR, 0, r, "MySQL user %s has no valid password: %s", user, r->uri);
       mysql_free_result(result);
+#if APR_HAS_THREADS
+  apr_thread_mutex_unlock(connection.lock);
+#endif
       return NULL;
     }
 
@@ -1213,6 +1215,9 @@ static char * get_mysql_pw(request_rec *r, char *user, mysql_auth_config_rec *m,
   }
 
   if (result) mysql_free_result(result);
+#if APR_HAS_THREADS
+  apr_thread_mutex_unlock(connection.lock);
+#endif
 
   return pw;
 }
@@ -1250,9 +1255,6 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
 	      m->mysqlGroupUserNameField, sql_safe_user);
   }
 
-#if APR_HAS_THREADS
-  apr_thread_mutex_lock(connection.lock);
-#endif
   if (mysql_query(connection.handle, query) != 0) {
 #if APR_HAS_THREADS
     apr_thread_mutex_unlock(connection.lock);
@@ -1262,9 +1264,6 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
   }
 
   result = mysql_store_result(connection.handle);
-#if APR_HAS_THREADS
-    apr_thread_mutex_unlock(connection.lock);
-#endif
 
   if (result && (mysql_num_rows(result) > 0)) {
     int i = mysql_num_rows(result);
@@ -1280,6 +1279,9 @@ static char ** get_mysql_groups(request_rec *r, char *user, mysql_auth_config_re
   }
 
   if (result) mysql_free_result(result);
+#if APR_HAS_THREADS
+    apr_thread_mutex_unlock(connection.lock);
+#endif
 
   return list;
 }

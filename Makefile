@@ -6,7 +6,7 @@ APXS=apxs2
 endif
 APXSFLAGS = `mysql_config --cflags`
 RM = rm -f
-LIBS = `mysql_config --libs`
+LIBS = `mysql_config --libs` -lm -lz -lcrypto
 CC = gcc
 LD = $(CC)
 CFLAGS = -Wall -O2 -fomit-frame-pointer -funroll-loops

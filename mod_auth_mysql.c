@@ -69,6 +69,7 @@
  */
 
 #define PHPASS_ADDSLASHES 1
+#define BCRYPT_HASH_LEN 60
 
 #define STRING(x) STR(x)		/* Used to build strings from compile options */
 #define STR(x) #x
@@ -280,6 +281,7 @@
 
 #include "crypt_private.h"
 #include "crypt_scrambled.h"
+#include "crypt_blowfish.h"
 
 #ifndef SCRAMBLED_PASSWORD_CHAR_LENGTH /* Ensure it is defined for older MySQL releases */
   #define SCRAMBLED_PASSWORD_CHAR_LENGTH 32 /* Big enough for the old method of scrambling */
@@ -294,6 +296,7 @@
 static short pw_scrambled(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
 static short pw_md5(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
 static short pw_phpass_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
+static short pw_bcrypt_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
 static short pw_crypted(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
 #if _AES
 static short pw_aes(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt);
@@ -330,6 +333,7 @@ static encryption encryptions[] = {{"crypt", SALT_OPTIONAL, pw_crypted},
 					   {"aes", SALT_REQUIRED, pw_aes},
 #endif
 					   {"phpass", NO_SALT, pw_phpass_portable},
+					   {"bcrypt", NO_SALT, pw_bcrypt_portable},
 					   {"sha1", NO_SALT, pw_sha1}};
 typedef struct {		/* User formatting patterns */
   char pattern;			/* Pattern to match */
@@ -918,8 +922,8 @@ static short pw_plain(POOL * pool, const char * real_pw, const char * sent_pw, c
   return strcmp(real_pw, sent_pw) == 0;
 }
 
-static void phpass_addslashes(const char * src, char * dest) {
 #ifdef PHPASS_ADDSLASHES
+static void phpass_addslashes(const char * src, char * dest) {
 	int length;
 	const char *source, *end;
 	char *target;
@@ -943,17 +947,25 @@ static void phpass_addslashes(const char * src, char * dest) {
 	}
 
 	*target = '\0';
-#endif
 }
+#endif
 
 /* checks phpass portable passwords */
 static short pw_phpass_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt) {
-	char *escaped_sent_pw = alloca(2 * strlen(sent_pw) + 1);
+	if (strcmp(real_pw, crypt_private(sent_pw, real_pw))) {
+		return pw_md5(pool, real_pw, sent_pw, salt); 
+	}
 
-	phpass_addslashes(sent_pw, escaped_sent_pw);
+	return 1;
+}
 
-	if (strcmp(real_pw, crypt_private((const char *) escaped_sent_pw, real_pw))) {
-		return pw_md5(pool, real_pw, (const char *) escaped_sent_pw, salt); 
+
+static short pw_bcrypt_portable(POOL * pool, const char * real_pw, const char * sent_pw, const char * salt) {
+	char output[BCRYPT_HASH_LEN+1];
+	char * hashed_sent_pass = _crypt_blowfish_rn(sent_pw, real_pw, output, BCRYPT_HASH_LEN+1);
+
+	if (!hashed_sent_pass || strcmp(real_pw, hashed_sent_pass)) {
+		return pw_phpass_portable(pool, real_pw, sent_pw, salt);
 	}
 
 	return 1;
@@ -1374,7 +1386,14 @@ static int mysql_authenticate_basic_user (request_rec *r)
     return OK;
   }
 
+  #ifdef PHPASS_ADDSLASHES
+  char *escaped_sent_pw;
+  escaped_sent_pw = alloca(2 * strlen(sent_pw) + 1);
+  phpass_addslashes(sent_pw, escaped_sent_pw);
+  passwords_match = enc_data->func(r->pool, real_pw, escaped_sent_pw, salt);
+  #else
   passwords_match = enc_data->func(r->pool, real_pw, sent_pw, salt);
+  #endif
 
   if(passwords_match) {
 	  return OK;
